@@ -14,7 +14,21 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
 
     let trait_vis = input.vis;
     let trait_name = input.ident;
-    let _generics = input.generics.clone();
+    let generics = input.generics.clone();
+    let generics_params = &generics.params;
+    let mut generics_names = proc_macro2::TokenStream::new();
+    let mut gen_phantoms = proc_macro2::TokenStream::new();
+    for param in generics.type_params() {
+        let ident = &param.ident;
+        let field = Ident::new(
+            &format!("{}_", param.ident.to_string()),
+            Span::call_site(),
+        );
+        generics_names.extend(quote! { #ident, });
+        gen_phantoms.extend(quote! {
+            #field: std::marker::PhantomData<#ident>,
+        });
+    }
     let mut associated_type_items = proc_macro2::TokenStream::new();
 
     // Decompose the trait into the corresponding queries.
@@ -134,12 +148,17 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         Span::call_site(),
     );
 
+    let group_storage_conc = quote! {
+        #group_storage<DB__, #generics_names>
+    };
+
     let mut query_fn_declarations = proc_macro2::TokenStream::new();
     let mut query_fn_definitions = proc_macro2::TokenStream::new();
     let mut query_descriptor_variants = proc_macro2::TokenStream::new();
     let mut query_descriptor_maybe_change = proc_macro2::TokenStream::new();
     let mut storage_fields = proc_macro2::TokenStream::new();
     let mut storage_defaults = proc_macro2::TokenStream::new();
+
     for query in &queries {
         let key_names: &Vec<_> = &(0..query.keys.len())
             .map(|i| Ident::new(&format!("key{}", i), Span::call_site()))
@@ -207,7 +226,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         // A variant for the group descriptor below
         query_descriptor_maybe_change.extend(quote! {
             #group_key::#fn_name(key) => {
-                let group_storage: &#group_storage<DB__> = salsa::plumbing::HasQueryGroup::group_storage(db);
+                let group_storage: &#group_storage_conc = salsa::plumbing::HasQueryGroup::group_storage(db);
                 let storage = &group_storage.#fn_name;
 
                 <_ as salsa::plumbing::QueryStorageOps<DB__, #qt>>::maybe_changed_since(
@@ -235,7 +254,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         let bounds = &input.supertraits;
         quote! {
             #(#attrs)*
-            #trait_vis trait #trait_name : #bounds {
+            #trait_vis trait #trait_name #generics : #bounds {
                 #associated_type_items
                 #query_fn_declarations
             }
@@ -245,12 +264,16 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     // Emit the query group struct and impl of `QueryGroup`.
     output.extend(quote! {
         /// Representative struct for the query group.
-        #trait_vis struct #group_struct { }
+        #trait_vis struct #group_struct#generics {
+            #gen_phantoms
+        }
 
-        impl<DB__> salsa::plumbing::QueryGroup<DB__> for #group_struct
-        where DB__: #trait_name
+        #[automatically_derived]
+        #[allow(unused_qualifications)]
+        impl<DB__, #generics_params> salsa::plumbing::QueryGroup<DB__> for #group_struct<#generics_names>
+        where DB__: #trait_name<#generics_names>
         {
-            type GroupStorage = #group_storage<DB__>;
+            type GroupStorage = #group_storage_conc;
             type GroupKey = #group_key;
         }
     });
@@ -259,10 +282,12 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     output.extend({
         let bounds = &input.supertraits;
         quote! {
-            impl<T> #trait_name for T
+            #[automatically_derived]
+            #[allow(unused_qualifications)]
+            impl<T__, #generics_params> #trait_name<#generics_names> for T__
             where
-                T: #bounds,
-                T: salsa::plumbing::HasQueryGroup<#group_struct>
+                T__: #bounds,
+                T__: salsa::plumbing::HasQueryGroup<#group_struct<#generics_names>>
             {
                 #query_fn_definitions
             }
@@ -292,15 +317,17 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             #[derive(Default, Debug)]
             #trait_vis struct #qt;
 
-            impl<DB> salsa::Query<DB> for #qt
+            #[automatically_derived]
+            #[allow(unused_qualifications)]
+            impl<DB__, #generics_params> salsa::Query<DB__> for #qt
             where
-                DB: #trait_name,
+                DB__: #trait_name<#generics_names>,
             {
                 type Key = (#(#keys),*);
                 type Value = #value;
-                type Storage = salsa::plumbing::#storage<DB, Self>;
-                type Group = #group_struct;
-                type GroupStorage = #group_storage<DB>;
+                type Storage = salsa::plumbing::#storage<DB__, Self>;
+                type Group = #group_struct<#generics_names>;
+                type GroupStorage = #group_storage_conc;
                 type GroupKey = #group_key;
 
                 fn group_storage(group_storage: &Self::GroupStorage) -> &Self::Storage {
@@ -329,12 +356,14 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
                 None => query.fn_name.clone().into_token_stream(),
             };
             output.extend(quote_spanned! {span=>
-                impl<DB> salsa::plumbing::QueryFunction<DB> for #qt
+                #[automatically_derived]
+                #[allow(unused_qualifications)]
+                impl<DB__, #generics_params> salsa::plumbing::QueryFunction<DB__> for #qt
                 where
-                    DB: #trait_name,
+                    DB__: #trait_name<#generics_names>,
                 {
-                    fn execute(db: &DB, #key_pattern: <Self as salsa::Query<DB>>::Key)
-                        -> <Self as salsa::Query<DB>>::Value {
+                    fn execute(db: &DB__, #key_pattern: <Self as salsa::Query<DB__>>::Key)
+                        -> <Self as salsa::Query<DB__>>::Value {
                         #invoke(db, #(#key_names),*)
                     }
                 }
@@ -349,7 +378,9 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             #query_descriptor_variants
         }
 
-        impl #group_key {
+        #[automatically_derived]
+        #[allow(unused_qualifications)]
+        impl #generics #group_key {
             #trait_vis fn maybe_changed_since<DB__>(
                 &self,
                 db: &DB__,
@@ -357,8 +388,8 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
                 revision: salsa::plumbing::Revision,
             ) -> bool
             where
-                DB__: #trait_name,
-                DB__: salsa::plumbing::HasQueryGroup<#group_struct>,
+                DB__: #trait_name<#generics_names>,
+                DB__: salsa::plumbing::HasQueryGroup<#group_struct<#generics_names>>,
             {
                 match self {
                     #query_descriptor_maybe_change
@@ -378,11 +409,15 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     // It would derive Default, but then all database structs would have to implement Default
     // as the derived version includes an unused `+ Default` constraint.
     output.extend(quote! {
-        #trait_vis struct #group_storage<DB__: #trait_name> {
+        #[automatically_derived]
+        #[allow(unused_qualifications)]
+        #trait_vis struct #group_storage<DB__: #trait_name<#generics_names>, #generics_params> {
             #storage_fields
         }
 
-        impl<DB__: #trait_name> Default for #group_storage<DB__> {
+        #[automatically_derived]
+        #[allow(unused_qualifications)]
+        impl<DB__: #trait_name<#generics_names>, #generics_params> Default for #group_storage_conc {
             #[inline]
             fn default() -> Self {
                 #group_storage {
@@ -391,10 +426,12 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             }
         }
 
-        impl<DB__> #group_storage<DB__>
+        #[automatically_derived]
+        #[allow(unused_qualifications)]
+        impl<DB__, #generics_params> #group_storage_conc
         where
-            DB__: #trait_name,
-            DB__: salsa::plumbing::HasQueryGroup<#group_struct>,
+            DB__: #trait_name<#generics_names>,
+            DB__: salsa::plumbing::HasQueryGroup<#group_struct<#generics_names>>,
         {
             #trait_vis fn for_each_query(
                 &self,
