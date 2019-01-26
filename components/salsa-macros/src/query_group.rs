@@ -259,10 +259,10 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     output.extend({
         let bounds = &input.supertraits;
         quote! {
-            impl<T> #trait_name for T
+            impl<T__> #trait_name for T__
             where
-                T: #bounds,
-                T: salsa::plumbing::HasQueryGroup<#group_struct>
+                T__: #bounds,
+                T__: salsa::plumbing::HasQueryGroup<#group_struct>
             {
                 #query_fn_definitions
             }
@@ -292,15 +292,15 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             #[derive(Default, Debug)]
             #trait_vis struct #qt;
 
-            impl<DB> salsa::Query<DB> for #qt
+            impl<DB__> salsa::Query<DB__> for #qt
             where
-                DB: #trait_name,
+                DB__: #trait_name,
             {
                 type Key = (#(#keys),*);
                 type Value = #value;
-                type Storage = salsa::plumbing::#storage<DB, Self>;
+                type Storage = salsa::plumbing::#storage<DB__, Self>;
                 type Group = #group_struct;
-                type GroupStorage = #group_storage<DB>;
+                type GroupStorage = #group_storage<DB__>;
                 type GroupKey = #group_key;
 
                 fn group_storage(group_storage: &Self::GroupStorage) -> &Self::Storage {
@@ -329,12 +329,12 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
                 None => query.fn_name.clone().into_token_stream(),
             };
             output.extend(quote_spanned! {span=>
-                impl<DB> salsa::plumbing::QueryFunction<DB> for #qt
+                impl<DB__> salsa::plumbing::QueryFunction<DB__> for #qt
                 where
-                    DB: #trait_name,
+                    DB__: #trait_name,
                 {
-                    fn execute(db: &DB, #key_pattern: <Self as salsa::Query<DB>>::Key)
-                        -> <Self as salsa::Query<DB>>::Value {
+                    fn execute(db: &DB__, #key_pattern: <Self as salsa::Query<DB__>>::Key)
+                        -> <Self as salsa::Query<DB__>>::Value {
                         #invoke(db, #(#key_names),*)
                     }
                 }
