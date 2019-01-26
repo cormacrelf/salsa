@@ -16,6 +16,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     let trait_name = input.ident;
     let _generics = input.generics.clone();
     let mut associated_type_items = proc_macro2::TokenStream::new();
+    let mut assocs = vec![];
 
     // Decompose the trait into the corresponding queries.
     let mut queries = vec![];
@@ -119,6 +120,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             }
             TraitItem::Type(assoc) => {
                 associated_type_items.extend(quote! { #assoc });
+                assocs.push(assoc.clone());
             }
             _ => (),
         }
@@ -242,28 +244,82 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         }
     };
 
+    let mut assoc_thread_constraints = proc_macro2::TokenStream::new();
+    let mut assoc_thread_constraints2 = proc_macro2::TokenStream::new();
+    let mut assoc_thread = proc_macro2::TokenStream::new();
+    let mut assoc_thread2 = proc_macro2::TokenStream::new();
+    let mut assoc_links = proc_macro2::TokenStream::new();
+    let mut assoc_items = proc_macro2::TokenStream::new();
+    let mut assoc_phantoms = proc_macro2::TokenStream::new();
+    let mut assoc_phantom_defaults = proc_macro2::TokenStream::new();
+    let mut storage_assoc_phantoms = proc_macro2::TokenStream::new();
+    let mut storage_assoc_phantom_defaults = proc_macro2::TokenStream::new();
+    let mut assoc_equals = proc_macro2::TokenStream::new();
+    for assoc in assocs {
+        let ident = &assoc.ident;
+        let bounds = &assoc.bounds;
+        let thread = Ident::new(
+            &format!("{}__", assoc.ident.to_string()),
+            Span::call_site(),
+        );
+        let thread2 = Ident::new(
+            &format!("{}__2", assoc.ident.to_string()),
+            Span::call_site(),
+        );
+        assoc_thread.extend(quote! {#thread, });
+        assoc_thread2.extend(quote! {#thread2, });
+        assoc_thread_constraints.extend(quote! {#thread: #bounds, });
+        assoc_thread_constraints2.extend(quote! {#thread2: #bounds, });
+        assoc_items.extend(quote! {
+            type #ident = #thread2;
+        });
+        assoc_links.extend(quote! {
+            <DB__ as #trait_name>::#ident,
+        });
+        assoc_phantoms.extend(quote! {
+            #ident: std::marker::PhantomData<#thread>,
+        });
+        assoc_phantom_defaults.extend(quote! {
+            #ident: Default::default(),
+        });
+        storage_assoc_phantoms.extend(quote! {
+            #ident: std::marker::PhantomData<<DB__ as #trait_name>::#ident>,
+        });
+        storage_assoc_phantom_defaults.extend(quote! {
+            #ident: Default::default(),
+        });
+        assoc_equals.extend(quote! {
+            #ident = #thread,
+        });
+    }
+
     // Emit the query group struct and impl of `QueryGroup`.
     output.extend(quote! {
         /// Representative struct for the query group.
-        #trait_vis struct #group_struct { }
+        #[derive(Default)]
+        #trait_vis struct #group_struct<#assoc_thread> {
+            #assoc_phantoms
+        }
 
-        impl<DB__> salsa::plumbing::QueryGroup<DB__> for #group_struct
-        where DB__: #trait_name
+        impl<DB__, #assoc_thread_constraints> salsa::plumbing::QueryGroup<DB__> for #group_struct<#assoc_thread>
+        where DB__: #trait_name<#assoc_equals>
         {
             type GroupStorage = #group_storage<DB__>;
             type GroupKey = #group_key;
         }
     });
 
+
     // Emit an impl of the trait
     output.extend({
         let bounds = &input.supertraits;
         quote! {
-            impl<T__> #trait_name for T__
+            impl<T__, #assoc_thread_constraints2> #trait_name for T__
             where
                 T__: #bounds,
-                T__: salsa::plumbing::HasQueryGroup<#group_struct>
+                T__: salsa::plumbing::HasQueryGroup<#group_struct<#assoc_thread2>>
             {
+                #assoc_items
                 #query_fn_definitions
             }
         }
@@ -299,7 +355,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
                 type Key = (#(#keys),*);
                 type Value = #value;
                 type Storage = salsa::plumbing::#storage<DB__, Self>;
-                type Group = #group_struct;
+                type Group = #group_struct<#assoc_links>;
                 type GroupStorage = #group_storage<DB__>;
                 type GroupKey = #group_key;
 
@@ -358,7 +414,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             ) -> bool
             where
                 DB__: #trait_name,
-                DB__: salsa::plumbing::HasQueryGroup<#group_struct>,
+                DB__: salsa::plumbing::HasQueryGroup<#group_struct<#assoc_links>>,
             {
                 match self {
                     #query_descriptor_maybe_change
@@ -380,6 +436,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     output.extend(quote! {
         #trait_vis struct #group_storage<DB__: #trait_name> {
             #storage_fields
+            #storage_assoc_phantoms
         }
 
         impl<DB__: #trait_name> Default for #group_storage<DB__> {
@@ -387,6 +444,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             fn default() -> Self {
                 #group_storage {
                     #storage_defaults
+                    #storage_assoc_phantom_defaults
                 }
             }
         }
@@ -394,7 +452,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         impl<DB__> #group_storage<DB__>
         where
             DB__: #trait_name,
-            DB__: salsa::plumbing::HasQueryGroup<#group_struct>,
+            DB__: salsa::plumbing::HasQueryGroup<#group_struct<#assoc_links>>,
         {
             #trait_vis fn for_each_query(
                 &self,

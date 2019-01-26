@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::sync::Arc;
 
 ///////////////////////////////////////////////////////////////////////////
@@ -22,6 +24,8 @@ use std::sync::Arc;
 // trait for that query group as a supertrait.
 #[salsa::query_group(HelloWorldStorage)]
 trait HelloWorld: salsa::Database {
+    type Assoc: Default + Clone + Hash + Debug + Eq + Sync + Send;
+
     // For each query, we give the name, some input keys (here, we
     // have one key, `()`) and the output type `Arc<String>`. We can
     // use attributes to give other configuration:
@@ -36,6 +40,12 @@ trait HelloWorld: salsa::Database {
     // This is a *derived query*, meaning its value is specified by
     // a function (see Step 2, below).
     fn length(&self, key: ()) -> usize;
+
+    fn arbitrary(&self, key: ()) -> Self::Assoc;
+}
+
+fn arbitrary<H: HelloWorld>(db: &H, key: ()) -> H::Assoc {
+    H::Assoc::default()
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -50,6 +60,7 @@ trait HelloWorld: salsa::Database {
 // here, we only know the subset of methods we care about (defined by
 // the `HelloWorld` trait we specified above).
 fn length(db: &impl HelloWorld, (): ()) -> usize {
+    // fn length<T>(db: &impl HelloWorld<T>, (): ()) -> usize {
     // Read the input string:
     let input_string = db.input_string(());
 
@@ -71,7 +82,7 @@ fn length(db: &impl HelloWorld, (): ()) -> usize {
 // The database struct can contain basically anything you need, but it
 // must have a `runtime` field as shown, and you must implement the
 // `salsa::Database` trait (as shown below).
-#[salsa::database(HelloWorldStorage)]
+#[salsa::database(HelloWorldStorage<Option<String>>)]
 #[derive(Default)]
 struct DatabaseStruct {
     runtime: salsa::Runtime<DatabaseStruct>,
@@ -96,4 +107,5 @@ fn main() {
     db.set_input_string((), Arc::new(format!("Hello, world")));
 
     println!("Now, the length is {}.", db.length(()));
+    println!("Got some associated type default {:?}.", db.arbitrary(()));
 }
