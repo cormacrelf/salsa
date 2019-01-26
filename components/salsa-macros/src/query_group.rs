@@ -15,6 +15,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     let trait_vis = input.vis;
     let trait_name = input.ident;
     let _generics = input.generics.clone();
+    let mut associated_type_items = proc_macro2::TokenStream::new();
 
     // Decompose the trait into the corresponding queries.
     let mut queries = vec![];
@@ -115,6 +116,9 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
                     value,
                     invoke,
                 });
+            }
+            TraitItem::Type(assoc) => {
+                associated_type_items.extend(quote! { #assoc });
             }
             _ => (),
         }
@@ -232,6 +236,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         quote! {
             #(#attrs)*
             #trait_vis trait #trait_name : #bounds {
+                #associated_type_items
                 #query_fn_declarations
             }
         }
@@ -279,6 +284,8 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         );
         let keys = &query.keys;
         let value = &query.value;
+        // Self doesn't make sense outside the original trait definition
+        let value = replace_self_ident(quote! {#value}, "DB__", Span::call_site());
 
         // Emit the query struct and implement the Query trait on it.
         output.extend(quote! {
@@ -414,6 +421,28 @@ fn is_salsa_attr_path(path: &syn::Path) -> bool {
         .map(|s| s.value().ident != "salsa")
         .unwrap_or(true)
         || path.segments.len() != 2
+}
+
+fn replace_self_ident(
+    type_tokens: proc_macro2::TokenStream,
+    with: &str,
+    span: Span,
+) -> proc_macro2::TokenStream {
+    use proc_macro2::TokenTree;
+    type_tokens
+        .into_iter()
+        .map(|tok| match tok {
+            TokenTree::Ident(ref i) => match i.to_string().as_str() {
+                "Self" => TokenTree::Ident(Ident::new(with, span)),
+                _ => tok.clone(),
+            },
+            TokenTree::Group(g) => TokenTree::Group(proc_macro2::Group::new(
+                g.delimiter(),
+                replace_self_ident(g.stream(), with, span),
+            )),
+            _ => tok.clone(),
+        })
+        .collect()
 }
 
 #[derive(Debug)]
