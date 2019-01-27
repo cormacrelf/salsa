@@ -15,19 +15,17 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     let trait_vis = input.vis;
     let trait_name = input.ident;
     let generics = input.generics.clone();
-    let generics_params_static = {
-        let mut tokens = proc_macro2::TokenStream::new();
-        for param in generics.params.iter() {
-            tokens.extend(quote! { #param + 'static, });
-        }
-        tokens
-    };
+    let mut generics_params_static = proc_macro2::TokenStream::new();
     let mut generics_names = proc_macro2::TokenStream::new();
     let mut gen_phantoms = proc_macro2::TokenStream::new();
     let mut stor_phantoms = proc_macro2::TokenStream::new();
     let mut stor_phantom_defaults = proc_macro2::TokenStream::new();
     for param in generics.type_params() {
         let ident = &param.ident;
+        let bounds = &param.bounds;
+        generics_params_static.extend(quote! {
+            #ident: #bounds + Send + Sync + Clone + Default + Eq + std::hash::Hash + std::fmt::Debug + 'static,
+        });
         let field = Ident::new(
             &format!("{}_", param.ident.to_string()),
             Span::call_site(),
@@ -268,7 +266,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         let bounds = &input.supertraits;
         quote! {
             #(#attrs)*
-            #trait_vis trait #trait_name #generics : #bounds {
+            #trait_vis trait #trait_name<#generics_params_static> : #bounds {
                 #associated_type_items
                 #query_fn_declarations
             }

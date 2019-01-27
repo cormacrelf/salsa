@@ -14,17 +14,21 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     let query_groups = &args.query_groups;
     let database_name = &input.ident;
     let visibility = &input.vis;
-    let generics = &input.generics;
+    let mut generics_params = proc_macro2::TokenStream::new();
     let mut generics_names = proc_macro2::TokenStream::new();
     let mut gen_phantoms = proc_macro2::TokenStream::new();
     let mut gen_phantom_defaults = proc_macro2::TokenStream::new();
-    for param in generics.type_params() {
+    for param in input.generics.type_params() {
         let ident = &param.ident;
+        let bounds = &param.bounds;
         let field = Ident::new(
             &format!("{}_", param.ident.to_string()),
             Span::call_site(),
         );
         generics_names.extend(quote! { #ident, });
+        generics_params.extend(quote! {
+            #ident: #bounds + Send + Sync + Clone + Default + Eq + std::hash::Hash + std::fmt::Debug + 'static,
+        });
         gen_phantoms.extend(quote! {
             #field: std::marker::PhantomData<#ident>,
         });
@@ -81,7 +85,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
             #group_name_snake: #group_storage,
         });
         has_group_impls.extend(quote! {
-            impl#generics salsa::plumbing::HasQueryGroup<#group_path> for #database_name<#generics_names> {
+            impl<#generics_params> salsa::plumbing::HasQueryGroup<#group_path> for #database_name<#generics_names> {
                 fn group_storage(db: &Self) -> &#group_storage {
                     let runtime = salsa::Database::salsa_runtime(db);
                     &runtime.storage().#group_name_snake
@@ -100,7 +104,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     output.extend(quote! {
         #[derive(Default)]
         #[doc(hidden)]
-        #visibility struct __SalsaDatabaseStorage #generics {
+        #visibility struct __SalsaDatabaseStorage <#generics_params> {
             #storage_fields
         }
     });
@@ -109,7 +113,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     output.extend(quote! {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
         #[doc(hidden)]
-        #visibility struct __SalsaDatabaseKey #generics {
+        #visibility struct __SalsaDatabaseKey <#generics_params> {
             kind: __SalsaDatabaseKeyKind<#generics_names>
         }
     });
@@ -128,14 +132,14 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     }
     output.extend(quote! {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-        enum __SalsaDatabaseKeyKind#generics {
+        enum __SalsaDatabaseKeyKind<#generics_params> {
             #variants
         }
     });
 
     //
     output.extend(quote! {
-        impl#generics salsa::plumbing::DatabaseStorageTypes for #database_name<#generics_names> {
+        impl<#generics_params> salsa::plumbing::DatabaseStorageTypes for #database_name<#generics_names> {
             type DatabaseKey = __SalsaDatabaseKey<#generics_names>;
             type DatabaseStorage = __SalsaDatabaseStorage<#generics_names>;
         }
@@ -153,7 +157,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
         });
     }
     output.extend(quote! {
-        impl#generics salsa::plumbing::DatabaseOps for #database_name<#generics_names> {
+        impl<#generics_params> salsa::plumbing::DatabaseOps for #database_name<#generics_names> {
             fn for_each_query(
                 &self,
                 mut op: impl FnMut(&dyn salsa::plumbing::QueryStorageMassOps<Self>),
@@ -176,7 +180,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     output.extend(quote! {
-        impl#generics salsa::plumbing::DatabaseKey<#database_name<#generics_names>> for __SalsaDatabaseKey<#generics_names> {
+        impl<#generics_params> salsa::plumbing::DatabaseKey<#database_name<#generics_names>> for __SalsaDatabaseKey<#generics_names> {
             fn maybe_changed_since(
                 &self,
                 db: &#database_name<#generics_names>,
