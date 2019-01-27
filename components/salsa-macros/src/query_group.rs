@@ -125,8 +125,10 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         }
     }
 
-    let mut assoc_thread_constraints = proc_macro2::TokenStream::new();
     let mut assoc_thread = proc_macro2::TokenStream::new();
+    let mut assoc_thread_constraints = proc_macro2::TokenStream::new();
+    let mut at2 = proc_macro2::TokenStream::new();
+    let mut atc2 = proc_macro2::TokenStream::new();
     let mut assoc_links = proc_macro2::TokenStream::new();
     let mut assoc_items = proc_macro2::TokenStream::new();
     let mut assoc_phantoms = proc_macro2::TokenStream::new();
@@ -141,10 +143,16 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
             &format!("{}__", assoc.ident.to_string()),
             Span::call_site(),
         );
+        let thread2 = Ident::new(
+            &format!("{}__InMainImpl", assoc.ident.to_string()),
+            Span::call_site(),
+        );
+        at2.extend(quote! { #thread2, });
+        atc2.extend(quote! { #thread2: #bounds, });
         assoc_thread.extend(quote! {#thread, });
         assoc_thread_constraints.extend(quote! {#thread: #bounds, });
         assoc_items.extend(quote! {
-            type #ident = #thread;
+            type #ident = #thread2;
         });
         assoc_links.extend(quote! {
             <DB__ as #trait_name>::#ident,
@@ -312,10 +320,10 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     output.extend({
         let bounds = &input.supertraits;
         quote! {
-            impl<T__, #assoc_thread_constraints> #trait_name for T__
+            impl<T__, #atc2> #trait_name for T__
             where
                 T__: #bounds,
-                T__: salsa::plumbing::HasQueryGroup<#group_struct<#assoc_thread>>
+                T__: salsa::plumbing::HasQueryGroup<#group_struct<#at2>>
             {
                 #assoc_items
                 #query_fn_definitions
@@ -351,7 +359,7 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
 
             impl<DB__> salsa::Query<DB__> for #qt<DB__>
             where
-                DB__: #trait_name
+                DB__: #trait_name,
             {
                 type Key = (#(#keys),*);
                 type Value = #value;
