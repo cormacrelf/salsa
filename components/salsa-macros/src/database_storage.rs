@@ -1,9 +1,9 @@
 use heck::SnakeCase;
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Ident, ItemStruct, Path, Token};
-use proc_macro2::Span;
 
 type PunctuatedQueryGroups = Punctuated<QueryGroup, Token![,]>;
 
@@ -21,13 +21,11 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     for param in input.generics.type_params() {
         let ident = &param.ident;
         let bounds = &param.bounds;
-        let field = Ident::new(
-            &format!("{}_", param.ident.to_string()),
-            Span::call_site(),
-        );
+        let field = Ident::new(&format!("{}_", param.ident.to_string()), Span::call_site());
         generics_names.extend(quote! { #ident, });
         generics_params.extend(quote! {
-            #ident: #bounds + Send + Sync + Clone + Default + Eq + std::hash::Hash + std::fmt::Debug + 'static,
+            #ident: Send + Sync + Clone + Default + Eq + std::hash::Hash
+                    + std::fmt::Debug + 'static + #bounds,
         });
         gen_phantoms.extend(quote! {
             #field: std::marker::PhantomData<#ident>,

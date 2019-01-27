@@ -1,17 +1,18 @@
-use std::sync::Arc;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::sync::Arc;
 
 #[salsa::query_group(HelloWorldStorage)]
-trait HelloWorld<Generic: Default + Hash + Debug + Eq + Sync + Send + Sized>: salsa::Database {
-
+trait HelloWorld<Generic>: salsa::Database {
     #[salsa::input]
     fn input_yo(&self, key: ()) -> Arc<Generic>;
     fn yo(&self, key: ()) -> Arc<Generic>;
-
 }
 
-fn yo<T: Default + Hash + Debug + Eq + Clone + Sync + Send + Sized + 'static>(db: &impl HelloWorld<T>, _key: ()) -> Arc<T> {
+fn yo<T: Default + Hash + Debug + Eq + Clone + Sync + Send + Sized + 'static>(
+    db: &impl HelloWorld<T>,
+    _key: (),
+) -> Arc<T> {
     db.input_yo(()).clone()
 }
 
@@ -21,7 +22,9 @@ struct DatabaseStruct<T: Debug + Hash + Default + Clone + Eq + PartialEq + Send 
     runtime: salsa::Runtime<DatabaseStruct<T>>,
 }
 
-impl<T: Debug + Hash + Default + Eq + PartialEq + Clone + Send + Sync + 'static> salsa::Database for DatabaseStruct<T> {
+impl<T: Debug + Hash + Default + Eq + PartialEq + Clone + Send + Sync + 'static> salsa::Database
+    for DatabaseStruct<T>
+{
     fn salsa_runtime(&self) -> &salsa::Runtime<DatabaseStruct<T>> {
         &self.runtime
     }

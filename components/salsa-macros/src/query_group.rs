@@ -24,12 +24,10 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
         let ident = &param.ident;
         let bounds = &param.bounds;
         generics_params_static.extend(quote! {
-            #ident: #bounds + Send + Sync + Clone + Default + Eq + std::hash::Hash + std::fmt::Debug + 'static,
+            #ident: Send + Sync + Clone + Default + Eq + std::hash::Hash
+                    + std::fmt::Debug + 'static + #bounds,
         });
-        let field = Ident::new(
-            &format!("{}_", param.ident.to_string()),
-            Span::call_site(),
-        );
+        let field = Ident::new(&format!("{}_", param.ident.to_string()), Span::call_site());
         generics_names.extend(quote! { #ident, });
         gen_phantoms.extend(quote! {
             #field: std::marker::PhantomData<#ident>,
