@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Ident, ItemStruct, Path, Token};
+use proc_macro2::Span;
 
 type PunctuatedQueryGroups = Punctuated<QueryGroup, Token![,]>;
 
@@ -13,6 +14,24 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     let query_groups = &args.query_groups;
     let database_name = &input.ident;
     let visibility = &input.vis;
+    let generics = &input.generics;
+    let mut generics_names = proc_macro2::TokenStream::new();
+    let mut gen_phantoms = proc_macro2::TokenStream::new();
+    let mut gen_phantom_defaults = proc_macro2::TokenStream::new();
+    for param in generics.type_params() {
+        let ident = &param.ident;
+        let field = Ident::new(
+            &format!("{}_", param.ident.to_string()),
+            Span::call_site(),
+        );
+        generics_names.extend(quote! { #ident, });
+        gen_phantoms.extend(quote! {
+            #field: std::marker::PhantomData<#ident>,
+        });
+        gen_phantom_defaults.extend(quote! {
+            #field: Default::default()
+        });
+    }
 
     let mut output = proc_macro2::TokenStream::new();
     output.extend(quote! { #input });
@@ -29,7 +48,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
         .iter()
         .map(|QueryGroup { group_path }| {
             quote! {
-                <#group_path as salsa::plumbing::QueryGroup<#database_name>>::GroupStorage
+                <#group_path as salsa::plumbing::QueryGroup<#database_name<#generics_names>>>::GroupStorage
             }
         })
         .collect();
@@ -38,7 +57,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
         .iter()
         .map(|QueryGroup { group_path }| {
             quote! {
-                <#group_path as salsa::plumbing::QueryGroup<#database_name>>::GroupKey
+                <#group_path as salsa::plumbing::QueryGroup<#database_name<#generics_names>>>::GroupKey
             }
         })
         .collect();
@@ -62,13 +81,13 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
             #group_name_snake: #group_storage,
         });
         has_group_impls.extend(quote! {
-            impl salsa::plumbing::HasQueryGroup<#group_path> for #database_name {
+            impl#generics salsa::plumbing::HasQueryGroup<#group_path> for #database_name<#generics_names> {
                 fn group_storage(db: &Self) -> &#group_storage {
                     let runtime = salsa::Database::salsa_runtime(db);
                     &runtime.storage().#group_name_snake
                 }
 
-                fn database_key(group_key: #group_key) -> __SalsaDatabaseKey {
+                fn database_key(group_key: #group_key) -> __SalsaDatabaseKey<#generics_names> {
                     __SalsaDatabaseKey {
                         kind: __SalsaDatabaseKeyKind::#group_name(group_key),
                     }
@@ -81,7 +100,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     output.extend(quote! {
         #[derive(Default)]
         #[doc(hidden)]
-        #visibility struct __SalsaDatabaseStorage {
+        #visibility struct __SalsaDatabaseStorage #generics {
             #storage_fields
         }
     });
@@ -90,8 +109,8 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     output.extend(quote! {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
         #[doc(hidden)]
-        #visibility struct __SalsaDatabaseKey {
-            kind: __SalsaDatabaseKeyKind
+        #visibility struct __SalsaDatabaseKey #generics {
+            kind: __SalsaDatabaseKeyKind<#generics_names>
         }
     });
 
@@ -109,16 +128,16 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     }
     output.extend(quote! {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-        enum __SalsaDatabaseKeyKind {
+        enum __SalsaDatabaseKeyKind#generics {
             #variants
         }
     });
 
     //
     output.extend(quote! {
-        impl salsa::plumbing::DatabaseStorageTypes for #database_name {
-            type DatabaseKey = __SalsaDatabaseKey;
-            type DatabaseStorage = __SalsaDatabaseStorage;
+        impl#generics salsa::plumbing::DatabaseStorageTypes for #database_name<#generics_names> {
+            type DatabaseKey = __SalsaDatabaseKey<#generics_names>;
+            type DatabaseStorage = __SalsaDatabaseStorage<#generics_names>;
         }
     });
 
@@ -134,7 +153,7 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
         });
     }
     output.extend(quote! {
-        impl salsa::plumbing::DatabaseOps for #database_name {
+        impl#generics salsa::plumbing::DatabaseOps for #database_name<#generics_names> {
             fn for_each_query(
                 &self,
                 mut op: impl FnMut(&dyn salsa::plumbing::QueryStorageMassOps<Self>),
@@ -157,10 +176,10 @@ pub(crate) fn database(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     output.extend(quote! {
-        impl salsa::plumbing::DatabaseKey<#database_name> for __SalsaDatabaseKey {
+        impl#generics salsa::plumbing::DatabaseKey<#database_name<#generics_names>> for __SalsaDatabaseKey<#generics_names> {
             fn maybe_changed_since(
                 &self,
-                db: &#database_name,
+                db: &#database_name<#generics_names>,
                 revision: salsa::plumbing::Revision,
             ) -> bool {
                 match &self.kind {

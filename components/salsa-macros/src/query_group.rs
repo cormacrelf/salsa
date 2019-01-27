@@ -15,7 +15,6 @@ pub(crate) fn query_group(args: TokenStream, input: TokenStream) -> TokenStream 
     let trait_vis = input.vis;
     let trait_name = input.ident;
     let generics = input.generics.clone();
-    let generics_params = &generics.params;
     let generics_params_static = {
         let mut tokens = proc_macro2::TokenStream::new();
         for param in generics.params.iter() {
